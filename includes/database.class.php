@@ -16,9 +16,42 @@ class DB
 
     private static $logs            = [];
 
+    /*
+        Optional per-section TLS options in config/config.php:
+            'ssl_verify'            => true|false   // verify server certificate
+            'ssl_allow_self_signed' => true|false   // accept self-signed certs when verifying
+        If neither key is present the connection is plaintext (current default).
+        Either key being set enables TLS (MYSQLI_CLIENT_SSL); ssl_verify === false
+        OR ssl_allow_self_signed === true skips strict cert validation
+        (MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT).
+    */
     private static function createConnectSyntax(&$options)
     {
-        return 'mysqli://'.$options['user'].':'.$options['pass'].'@'.$options['host'].'/'.$options['db'];
+        $url = 'mysqli://'.$options['user'].':'.$options['pass'].'@'.$options['host'].'/'.$options['db'];
+
+        $extra = [];
+        if (array_key_exists('ssl_verify', $options))
+            $extra['ssl_verify'] = $options['ssl_verify'] ? '1' : '0';
+        if (array_key_exists('ssl_allow_self_signed', $options))
+            $extra['ssl_allow_self_signed'] = $options['ssl_allow_self_signed'] ? '1' : '0';
+        if ($extra)
+            $url .= '?'.http_build_query($extra);
+
+        return $url;
+    }
+
+    private static function sslFlags(array $options) : ?int
+    {
+        if (!array_key_exists('ssl_verify', $options) && !array_key_exists('ssl_allow_self_signed', $options))
+            return null;
+
+        $flags  = MYSQLI_CLIENT_SSL;
+        $verify = !array_key_exists('ssl_verify', $options) || !empty($options['ssl_verify']);
+        $allow  = !empty($options['ssl_allow_self_signed']);
+        if (!$verify || $allow)
+            $flags |= MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT;
+
+        return $flags;
     }
 
     public static function connect($idx)
@@ -61,7 +94,17 @@ class DB
         if (strstr($options['host'], ':'))
             [$options['host'], $port] = explode(':', $options['host']);
 
-        if ($link = mysqli_connect($options['host'], $options['user'], $options['pass'], $options['db'], $port ?: $defPort))
+        $sslFlags = self::sslFlags($options);
+        if ($sslFlags !== null)
+        {
+            $link = mysqli_init();
+            if ($link && @mysqli_real_connect($link, $options['host'], $options['user'], $options['pass'], $options['db'], $port ?: $defPort, null, $sslFlags))
+            {
+                mysqli_close($link);
+                return true;
+            }
+        }
+        else if ($link = mysqli_connect($options['host'], $options['user'], $options['pass'], $options['db'], $port ?: $defPort))
         {
             mysqli_close($link);
             return true;

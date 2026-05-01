@@ -47,7 +47,34 @@ class DbSimple_Mysqli extends DbSimple_Database
             }
         }
 
-        if ( isset($dsn['socket']) ) {
+        // Optional TLS — values arrive as strings via parse_str() in Generic::parseDSN()
+        $useSSL = array_key_exists('ssl_verify', $dsn) || array_key_exists('ssl_allow_self_signed', $dsn);
+        if ($useSSL) {
+            $flags  = MYSQLI_CLIENT_SSL;
+            $verify = !array_key_exists('ssl_verify', $dsn) || ($dsn['ssl_verify'] !== '0' && $dsn['ssl_verify'] !== '');
+            $allow  = array_key_exists('ssl_allow_self_signed', $dsn) && $dsn['ssl_allow_self_signed'] === '1';
+            if (!$verify || $allow)
+                $flags |= MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT;
+
+            $this->link = mysqli_init();
+            if (!$this->link)
+                return $this->_setDbError('mysqli_init()');
+
+            $ok = @mysqli_real_connect(
+                $this->link
+                ,isset($dsn['host']) ? $dsn['host'] : null
+                ,empty($dsn['user']) ? 'root' : $dsn['user']
+                ,empty($dsn['pass']) ? '' : $dsn['pass']
+                ,preg_replace('{^/}s', '', $dsn['path'])
+                ,empty($dsn['port']) ? null : (int)$dsn['port']
+                ,isset($dsn['socket']) ? $dsn['socket'] : null
+                ,$flags
+            );
+            if (!$ok) {
+                $this->link = null;
+                return $this->_setDbError('mysqli_real_connect()');
+            }
+        } else if ( isset($dsn['socket']) ) {
             // Socket connection
             $this->link = mysqli_connect(
                 null                                         // host
